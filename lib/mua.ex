@@ -114,8 +114,16 @@ defmodule Mua do
     port = opts[:port] || 25
     proto = opts[:protocol] || :tcp
     timeout = opts[:timeout] || @default_timeout
-    sock_opts = opts[proto] || []
+
+    tcp_opts = opts[:tcp] || []
     ssl_opts = opts[:ssl] || []
+
+    sock_opts =
+      case proto do
+        :ssl -> tcp_opts ++ ssl_opts
+        :tcp -> tcp_opts
+      end
+
     auth_creds = opts[:auth]
 
     with {:ok, socket, _banner} <- connect(proto, host, port, sock_opts, timeout) do
@@ -179,36 +187,19 @@ defmodule Mua do
   @spec connect(:ssl, host, :inet.port_number(), [:ssl.tls_client_option()], timeout) ::
           {:ok, :ssl.sslsocket(), banner :: String.t()} | error
   def connect(protocol, address, port, opts \\ [], timeout \\ @default_timeout) do
-    inet6? = Keyword.get(opts, :inet6, false)
-    opts = Keyword.drop(opts, [:timeout, :inet6, :mode, :active, :packet])
+    opts = Keyword.drop(opts, [:timeout, :mode, :active, :packet])
     opts = [{:mode, :binary}, {:active, false}, {:packet, :line} | opts]
 
-    opts =
-      case protocol do
-        :tcp -> opts
-        :ssl -> Mua.SSL.opts(address, opts)
-      end
-
-    transport_mod =
-      case protocol do
-        :tcp -> :gen_tcp
-        :ssl = ssl -> ssl
-      end
-
-    address =
+    inet_address =
       case address do
         _ when is_binary(address) -> String.to_charlist(address)
         _ -> address
       end
 
     connect_result =
-      if inet6? do
-        case transport_mod.connect(address, port, [:inet6 | opts], timeout) do
-          {:ok, _socket} = ok -> ok
-          _error -> transport_mod.connect(address, port, opts, timeout)
-        end
-      else
-        transport_mod.connect(address, port, opts, timeout)
+      case protocol do
+        :tcp -> :gen_tcp.connect(inet_address, port, opts, timeout)
+        :ssl -> :ssl.connect(inet_address, port, Mua.SSL.opts(address, opts), timeout)
       end
 
     with {:ok, socket} <- connect_result,
